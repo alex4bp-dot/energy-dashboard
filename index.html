@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Home Energy, Battery Arbitrage & Heat Pump Telemetry</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --card: #151f32;
+      --border: #263552;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --green: #10b981;
+      --blue: #3b82f6;
+      --amber: #f59e0b;
+      --purple: #a855f7;
+      --red: #ef4444;
+      --cyan: #06b6d4;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      padding: 20px;
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
+    .subtitle { color: var(--muted); font-size: 0.88rem; margin-top: 4px; }
+    .controls { display: flex; gap: 8px; align-items: center; }
+    button.range-btn {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    button.range-btn.active {
+      background: var(--blue);
+      border-color: var(--blue);
+    }
+    .status-banner {
+      background: linear-gradient(135deg, #172554 0%, #151f32 100%);
+      border: 1px solid #2563eb66;
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .mode-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #1e3a8a;
+      color: #93c5fd;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+    .schedule-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 0.84rem;
+      color: var(--muted);
+    }
+    .schedule-pills span {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      padding: 5px 10px;
+      border-radius: 6px;
+    }
+    .schedule-pills strong { color: var(--text); }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .kpi-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .kpi-label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+    .kpi-value {
+      font-size: 1.55rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .kpi-sub {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 4px;
+    }
+    .chart-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+    @media (min-width: 1024px) {
+      .chart-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .chart-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .chart-card h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #e2e8f0;
+    }
+    .chart-wrap {
+      position: relative;
+      height: 300px;
+      width: 100%;
+    }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Energy Arbitrage, Axle VPP & Heat Pump Telemetry</h1>
+      <div class="subtitle" id="last-updated">Loading telemetry...</div>
+    </div>
+    <div class="controls">
+      <button class="range-btn active" onclick="setHours(24)" id="btn-24">Last 24h</button>
+      <button class="range-btn" onclick="setHours(48)" id="btn-48">Last 48h</button>
+    </div>
+  </header>
+
+  <div class="status-banner">
+    <div>
+      <div style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;margin-bottom:4px;">Current Optimizer Mode</div>
+      <div class="mode-pill" id="mode-pill">--</div>
+    </div>
+    <div class="schedule-pills" id="schedule-pills"></div>
+  </div>
+
+  <div class="kpi-grid" id="kpi-grid"></div>
+
+  <div class="chart-grid">
+    <div class="chart-card">
+      <h2>Battery SoC (%) vs. 16:00 Pre-Charge Target, 19:00 Floor & Axle Target</h2>
+      <div class="chart-wrap"><canvas id="socChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h2>Power Flows: Solar PV, Grid I/O, Battery & House Load (W)</h2>
+      <div class="chart-wrap"><canvas id="powerChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h2>Tariff Rates: Effective Export vs. Grid Import (p/kWh)</h2>
+      <div class="chart-wrap"><canvas id="rateChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h2>Vaillant aroTHERM Plus: Temperatures (°C) & COP</h2>
+      <div class="chart-wrap"><canvas id="hpChart"></canvas></div>
+    </div>
+  </div>
+
+  <script>
+    let rawData = null;
+    let hoursToShow = 24;
+    let charts = {};
+
+    function fmtNum(val, dec = 1, suffix = '') {
+      if (val === null || val === undefined || isNaN(val)) return '--';
+      return Number(val).toFixed(dec) + suffix;
+    }
+
+    function setHours(h) {
+      hoursToShow = h;
+      document.getElementById('btn-24').classList.toggle('active', h === 24);
+      document.getElementById('btn-48').classList.toggle('active', h === 48);
+      if (rawData) renderCharts();
+    }
+
+    function renderKPIs(c) {
+      const updated = new Date(rawData.updated_at);
+      document.getElementById('last-updated').textContent =
+        `Last synced from Home Assistant: ${updated.toLocaleString()}`;
+
+      document.getElementById('mode-pill').textContent = c.mode || 'Normal';
+
+      const axleText = c.axle_event_active
+        ? `Active (${c.axle_event_start ? new Date(c.axle_event_start).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : ''} - ${c.axle_event_end ? new Date(c.axle_event_end).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : ''})`
+        : 'None Scheduled';
+
+      document.getElementById('schedule-pills').innerHTML = `
+        <span>Charge Slot 1: <strong>${c.charge_slot_1 || '--'}</strong></span>
+        <span>Charge Slot 2: <strong>${c.charge_slot_2 || '--'}</strong></span>
+        <span>Discharge Slot 1: <strong>${c.discharge_slot_1 || '--'} (${c.scheduled_discharging === 'on' ? 'ACTIVE' : 'OFF'})</strong></span>
+        <span>Axle VPP Event: <strong>${axleText}</strong></span>
+      `;
+
+      const cf = Number(c.cashflow_gbp_hr || 0);
+      const cfClass = cf > 0.01 ? 'pos' : (cf < -0.01 ? 'neg' : '');
+      const cfSign = cf > 0 ? '+' : '';
+
+      const kpis = [
+        {
+          label: 'Battery SoC',
+          value: fmtNum(c.battery_soc, 1, '%'),
+          sub: `16:00 Target: ${fmtNum(c.peak_target_soc, 0, '%')} | 19:00 Floor: ${fmtNum(c.peak_floor_soc, 0, '%')}`
+        },
+        {
+          label: 'Live Grid Cashflow',
+          value: `<span class="${cfClass}">${cfSign}£${fmtNum(Math.abs(cf), 2, '/hr')}</span>`,
+          sub: `Grid: ${fmtNum(c.grid_w, 0, ' W')} (${c.grid_w < 0 ? 'Exporting' : 'Importing'})`
+        },
+        {
+          label: 'Export / Import Rate',
+          value: `${fmtNum(c.export_rate_p, 1, 'p')} / ${fmtNum(c.import_rate_p, 1, 'p')}`,
+          sub: `Day→Peak Margin (88% RTE): ${fmtNum(c.arbitrage_margin_p, 2, 'p/kWh')}`
+        },
+        {
+          label: 'Solar & House Load',
+          value: `${fmtNum(c.solar_w, 0, ' W')} / ${fmtNum(c.load_w, 0, ' W')}`,
+          sub: `Today PV: ${fmtNum(c.daily_solar_kwh, 1, ' kWh')} | Battery: ${fmtNum(c.battery_w, 0, ' W')}`
+        },
+        {
+          label: "Today's Export / Import",
+          value: `${fmtNum(c.daily_export_kwh, 1)} / ${fmtNum(c.daily_import_kwh, 1)} kWh`,
+          sub: `Yesterday: +£${fmtNum(c.yesterday_export_gbp, 2)} exp / -£${fmtNum(c.yesterday_import_gbp, 2)} imp`
+        },
+        {
+          label: 'Heat Pump & Temps',
+          value: `COP ${fmtNum(c.cop_heatpump, 2)}`,
+          sub: `Out: ${fmtNum(c.outdoor_temp_c, 1, '°C')} | Room: ${fmtNum(c.room_temp_c, 1, '°C')} | DHW: ${fmtNum(c.dhw_temp_c, 1, '°C')}`
+        }
+      ];
+
+      document.getElementById('kpi-grid').innerHTML = kpis.map(k => `
+        <div class="kpi-card">
+          <div class="kpi-label">${k.label}</div>
+          <div class="kpi-value">${k.value}</div>
+          <div class="kpi-sub">${k.sub}</div>
+        </div>
+      `).join('');
+    }
+
+    function makeChart(id, labels, datasets, yTitle, y2Config = null) {
+      if (charts[id]) charts[id].destroy();
+      const ctx = document.getElementById(id).getContext('2d');
+      const scales = {
+        x: {
+          ticks: { color: '#94a3b8', maxTicksLimit: 10 },
+          grid: { color: '#1e293b' }
+        },
+        y: {
+          title: { display: true, text: yTitle, color: '#94a3b8' },
+          ticks: { color: '#94a3b8' },
+          grid: { color: '#1e293b' }
+        }
+      };
+      if (y2Config) scales.y2 = y2Config;
+
+      charts[id] = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          elements: { point: { radius: 0, hoverRadius: 4 }, line: { tension: 0.2, borderWidth: 2 } },
+          plugins: {
+            legend: { labels: { color: '#e2e8f0', boxWidth: 12, font: { size: 11 } } }
+          },
+          scales
+        }
+      });
+    }
+
+    function renderCharts() {
+      const s = rawData.series;
+      const totalPts = s.timestamps.length;
+      const ptsToKeep = Math.min(totalPts, hoursToShow * 4);
+      const startIdx = totalPts - ptsToKeep;
+
+      const slice = arr => (arr ? arr.slice(startIdx) : []);
+      const labels = slice(s.timestamps).map(ts => {
+        const d = new Date(ts);
+        return d.toLocaleTimeString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+      });
+
+      makeChart('socChart', labels, [
+        { label: 'Battery SoC (%)', data: slice(s.battery_soc), borderColor: '#10b981', backgroundColor: '#10b98122', fill: true },
+        { label: '16:00 Pre-Charge Target (%)', data: slice(s.peak_target_soc), borderColor: '#3b82f6', borderDash: [5, 5] },
+        { label: '19:00 Export Floor (%)', data: slice(s.peak_floor_soc), borderColor: '#f59e0b', borderDash: [4, 4] },
+        { label: 'Axle Target SoC (%)', data: slice(s.axle_target_soc), borderColor: '#a855f7', borderDash: [2, 2] }
+      ], '% SoC');
+
+      makeChart('powerChart', labels, [
+        { label: 'Solar PV (W)', data: slice(s.solar_w), borderColor: '#f59e0b' },
+        { label: 'Grid I/O (W, -Export)', data: slice(s.grid_w), borderColor: '#3b82f6' },
+        { label: 'Battery I/O (W)', data: slice(s.battery_w), borderColor: '#10b981' },
+        { label: 'House Load (W)', data: slice(s.load_w), borderColor: '#ef4444' }
+      ], 'Watts (W)');
+
+      makeChart('rateChart', labels, [
+        { label: 'Effective Export Rate (p/kWh)', data: slice(s.export_rate_p), borderColor: '#10b981', stepped: true },
+        { label: 'Grid Import Rate (p/kWh)', data: slice(s.import_rate_p), borderColor: '#ef4444', stepped: true }
+      ], 'p / kWh');
+
+      makeChart('hpChart', labels, [
+        { label: 'Outdoor Temp (°C)', data: slice(s.outdoor_temp_c), borderColor: '#06b6d4' },
+        { label: 'Room Temp (°C)', data: slice(s.room_temp_c), borderColor: '#10b981' },
+        { label: 'Flow Temp (°C)', data: slice(s.flow_temp_c), borderColor: '#f59e0b' },
+        { label: 'DHW Cylinder (°C)', data: slice(s.dhw_temp_c), borderColor: '#ef4444' },
+        { label: 'Heat Pump COP', data: slice(s.cop), borderColor: '#a855f7', yAxisID: 'y2' }
+      ], 'Temperature (°C)', {
+        position: 'right',
+        title: { display: true, text: 'COP', color: '#a855f7' },
+        ticks: { color: '#a855f7' },
+        grid: { drawOnChartArea: false }
+      });
+    }
+
+    async function init() {
+      const res = await fetch('data.json?t=' + Date.now());
+      rawData = await res.json();
+      renderKPIs(rawData.current);
+      renderCharts();
+    }
+    init();
+  </script>
+</body>
+</html>
