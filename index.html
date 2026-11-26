@@ -186,9 +186,17 @@
       <div class="yoy-header">
         <div>
           <h2 style="margin-bottom:2px;">Year-on-Year Total Energy Spend (Elec + Gas + Standing Charges &minus; Export) &amp; Outside Temp</h2>
-          <div class="subtitle" style="font-size:0.78rem;">2025 vs 2026 by calendar month (GU21 4QQ outside temp overlay; excludes Axle VPP payouts)</div>
+          <div class="subtitle" style="font-size:0.78rem;">2025 vs 2026 by calendar month &mdash; click any month bar to drill down day-by-day (GU21 4QQ temp overlay; excludes Axle payouts)</div>
         </div>
         <div class="controls">
+          <button class="range-btn" onclick="setYoyMonth(null)" id="btn-yoy-back" style="display:none;">&larr; All Months</button>
+          <select class="range-btn" id="yoy-month-select" onchange="setYoyMonth(this.value === '' ? null : Number(this.value))" style="padding:6px 10px;">
+            <option value="">All Months (Jan&ndash;Dec)</option>
+            <option value="0">January</option><option value="1">February</option><option value="2">March</option>
+            <option value="3">April</option><option value="4">May</option><option value="5">June</option>
+            <option value="6">July</option><option value="7">August</option><option value="8">September</option>
+            <option value="9">October</option><option value="10">November</option><option value="11">December</option>
+          </select>
           <button class="range-btn active" onclick="setYoyMode('per_day')" id="btn-yoy-day">&pound; / day</button>
           <button class="range-btn" onclick="setYoyMode('total')" id="btn-yoy-tot">Total &pound; / mo</button>
         </div>
@@ -385,11 +393,21 @@
     }
 
     let yoyMode = 'per_day';
+    let yoyDrillMonth = null; // null = Jan-Dec monthly view, 0..11 = day-by-day view for that month
 
     function setYoyMode(m) {
       yoyMode = m;
       document.getElementById('btn-yoy-day').classList.toggle('active', m === 'per_day');
       document.getElementById('btn-yoy-tot').classList.toggle('active', m === 'total');
+      if (rawData && rawData.yoy) renderYoy();
+    }
+
+    function setYoyMonth(mIdx) {
+      yoyDrillMonth = (mIdx === null || mIdx === undefined || isNaN(mIdx)) ? null : mIdx;
+      document.getElementById('btn-yoy-back').style.display = yoyDrillMonth === null ? 'none' : 'inline-block';
+      document.getElementById('btn-yoy-day').style.display = yoyDrillMonth === null ? 'inline-block' : 'none';
+      document.getElementById('btn-yoy-tot').style.display = yoyDrillMonth === null ? 'inline-block' : 'none';
+      document.getElementById('yoy-month-select').value = yoyDrillMonth === null ? '' : String(yoyDrillMonth);
       if (rawData && rawData.yoy) renderYoy();
     }
 
@@ -445,106 +463,96 @@
         </div>
       `).join('');
 
-      const isDay = yoyMode === 'per_day';
-      const val = (rec, fieldDay, fieldTot) => rec ? (isDay ? rec[fieldDay] : rec[fieldTot]) : null;
+      let labels, d25Elec, d25Gas, d26Elec, d26Gas, d25Temp, d26Temp, yTitle, tooltipAfter;
+      if (yoyDrillMonth === null) {
+        const isDay = yoyMode === 'per_day';
+        const val = (rec, fieldDay, fieldTot) => rec ? (isDay ? rec[fieldDay] : rec[fieldTot]) : null;
+        labels = y.labels;
+        d25Elec = y25.map(r => val(r, 'elec_net_per_day', 'elec_net_gbp'));
+        d25Gas  = y25.map(r => val(r, 'gas_per_day', 'gas_total_gbp'));
+        d26Elec = y26.map(r => val(r, 'elec_net_per_day', 'elec_net_gbp'));
+        d26Gas  = y26.map(r => val(r, 'gas_per_day', 'gas_total_gbp'));
+        d25Temp = y25.map(r => r ? r.avg_temp_c : null);
+        d26Temp = y26.map(r => r ? r.avg_temp_c : null);
+        yTitle = isDay ? 'Net Spend (£ / day)' : 'Net Spend (£ / month)';
+        tooltipAfter = (items) => {
+          const idx = items[0]?.dataIndex;
+          if (idx === undefined) return '';
+          const r25 = y25[idx], r26 = y26[idx];
+          const lines = [''];
+          if (r25) lines.push(`2025 Net: £${r25.net_per_day.toFixed(2)}/d (£${r25.net_gbp.toFixed(0)}/${r25.days}d) | Exp -£${r25.elec_exp_gbp.toFixed(0)}`);
+          if (r26) lines.push(`2026 Net: £${r26.net_per_day.toFixed(2)}/d (£${r26.net_gbp.toFixed(0)}/${r26.days}d) | Exp -£${r26.elec_exp_gbp.toFixed(0)}`);
+          if (r25 && r26) {
+            const d = r26.net_per_day - r25.net_per_day;
+            lines.push(`YoY Change: ${d <= 0 ? '' : '+'}£${d.toFixed(2)}/day (click bar for daily view)`);
+          }
+          return lines;
+        };
+      } else {
+        const m25 = y25[yoyDrillMonth];
+        const m26 = y26[yoyDrillMonth];
+        const rows25 = (m25 && m25.daily) ? m25.daily : [];
+        const rows26 = (m26 && m26.daily) ? m26.daily : [];
+        const nDays = Math.max(rows25.length, rows26.length, 28);
+        const mName = y.labels[yoyDrillMonth] || '';
+        labels = Array.from({ length: nDays }, (_, i) => `${mName} ${i + 1}`);
+        d25Elec = labels.map((_, i) => rows25[i] ? rows25[i][0] : null);
+        d25Gas  = labels.map((_, i) => rows25[i] ? rows25[i][1] : null);
+        d26Elec = labels.map((_, i) => rows26[i] ? rows26[i][0] : null);
+        d26Gas  = labels.map((_, i) => rows26[i] ? rows26[i][1] : null);
+        d25Temp = labels.map((_, i) => rows25[i] ? rows25[i][2] : null);
+        d26Temp = labels.map((_, i) => rows26[i] ? rows26[i][2] : null);
+        yTitle = `${mName} Daily Net Spend (£ / day)`;
+        tooltipAfter = (items) => {
+          const idx = items[0]?.dataIndex;
+          if (idx === undefined) return '';
+          const a = rows25[idx], b = rows26[idx];
+          const lines = [''];
+          const n25 = a ? (a[0] + a[1]) : null;
+          const n26 = b ? (b[0] + b[1]) : null;
+          if (a) lines.push(`2025: £${n25.toFixed(2)} (Exp -£${(a[3] || 0).toFixed(2)}, ${fmtNum(a[2], 1, '°C')})`);
+          if (b) lines.push(`2026: £${n26.toFixed(2)} (Exp -£${(b[3] || 0).toFixed(2)}, ${fmtNum(b[2], 1, '°C')})`);
+          if (n25 !== null && n26 !== null) {
+            const d = n26 - n25;
+            lines.push(`Day YoY: ${d <= 0 ? '' : '+'}£${d.toFixed(2)}`);
+          }
+          return lines;
+        };
+      }
 
       if (charts['yoyChart']) charts['yoyChart'].destroy();
       const ctx = document.getElementById('yoyChart').getContext('2d');
       charts['yoyChart'] = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: y.labels,
+          labels,
           datasets: [
-            {
-              label: '2025 Elec Net',
-              data: y25.map(r => val(r, 'elec_net_per_day', 'elec_net_gbp')),
-              backgroundColor: '#3b82f6aa',
-              borderColor: '#3b82f6',
-              borderWidth: 1,
-              stack: '2025',
-              order: 2
-            },
-            {
-              label: '2025 Gas (+SC)',
-              data: y25.map(r => val(r, 'gas_per_day', 'gas_total_gbp')),
-              backgroundColor: '#f97316aa',
-              borderColor: '#f97316',
-              borderWidth: 1,
-              stack: '2025',
-              order: 2
-            },
-            {
-              label: '2026 Elec Net',
-              data: y26.map(r => val(r, 'elec_net_per_day', 'elec_net_gbp')),
-              backgroundColor: '#10b981cc',
-              borderColor: '#10b981',
-              borderWidth: 1,
-              stack: '2026',
-              order: 2
-            },
-            {
-              label: '2026 Gas (+SC)',
-              data: y26.map(r => val(r, 'gas_per_day', 'gas_total_gbp')),
-              backgroundColor: '#fb923ccc',
-              borderColor: '#fb923c',
-              borderWidth: 1,
-              stack: '2026',
-              order: 2
-            },
-            {
-              label: '2025 Temp (°C)',
-              type: 'line',
-              data: y25.map(r => r ? r.avg_temp_c : null),
-              borderColor: '#94a3b8',
-              borderDash: [5, 4],
-              borderWidth: 2,
-              pointRadius: 3,
-              tension: 0.25,
-              yAxisID: 'y2',
-              order: 1
-            },
-            {
-              label: '2026 Temp (°C)',
-              type: 'line',
-              data: y26.map(r => r ? r.avg_temp_c : null),
-              borderColor: '#06b6d4',
-              borderWidth: 2.5,
-              pointRadius: 3.5,
-              tension: 0.25,
-              yAxisID: 'y2',
-              order: 1
-            }
+            { label: '2025 Elec Net', data: d25Elec, backgroundColor: '#3b82f6aa', borderColor: '#3b82f6', borderWidth: 1, stack: '2025', order: 2 },
+            { label: '2025 Gas (+SC)', data: d25Gas, backgroundColor: '#f97316aa', borderColor: '#f97316', borderWidth: 1, stack: '2025', order: 2 },
+            { label: '2026 Elec Net', data: d26Elec, backgroundColor: '#10b981cc', borderColor: '#10b981', borderWidth: 1, stack: '2026', order: 2 },
+            { label: '2026 Gas (+SC)', data: d26Gas, backgroundColor: '#fb923ccc', borderColor: '#fb923c', borderWidth: 1, stack: '2026', order: 2 },
+            { label: '2025 Temp (°C)', type: 'line', data: d25Temp, borderColor: '#94a3b8', borderDash: [5, 4], borderWidth: 2, pointRadius: yoyDrillMonth === null ? 3 : 2, tension: 0.25, yAxisID: 'y2', order: 1 },
+            { label: '2026 Temp (°C)', type: 'line', data: d26Temp, borderColor: '#06b6d4', borderWidth: 2.5, pointRadius: yoyDrillMonth === null ? 3.5 : 2.5, tension: 0.25, yAxisID: 'y2', order: 1 }
           ]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          onClick: (_evt, elements) => {
+            if (yoyDrillMonth === null && elements && elements.length > 0) {
+              setYoyMonth(elements[0].index);
+            }
+          },
           interaction: { mode: 'index', intersect: false },
           plugins: {
             legend: { labels: { color: '#e2e8f0', boxWidth: 12, font: { size: 11 } } },
-            tooltip: {
-              callbacks: {
-                afterBody: (items) => {
-                  const idx = items[0]?.dataIndex;
-                  if (idx === undefined) return '';
-                  const r25 = y25[idx], r26 = y26[idx];
-                  const lines = [''];
-                  if (r25) lines.push(`2025 Net: £${r25.net_per_day.toFixed(2)}/d (£${r25.net_gbp.toFixed(0)}/${r25.days}d) | Exp -£${r25.elec_exp_gbp.toFixed(0)}`);
-                  if (r26) lines.push(`2026 Net: £${r26.net_per_day.toFixed(2)}/d (£${r26.net_gbp.toFixed(0)}/${r26.days}d) | Exp -£${r26.elec_exp_gbp.toFixed(0)}`);
-                  if (r25 && r26) {
-                    const d = r26.net_per_day - r25.net_per_day;
-                    lines.push(`YoY Change: ${d <= 0 ? '' : '+'}£${d.toFixed(2)}/day`);
-                  }
-                  return lines;
-                }
-              }
-            }
+            tooltip: { callbacks: { afterBody: tooltipAfter } }
           },
           scales: {
             x: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
             y: {
               stacked: true,
-              title: { display: true, text: isDay ? 'Net Spend (£ / day)' : 'Net Spend (£ / month)', color: '#94a3b8' },
+              title: { display: true, text: yTitle, color: '#94a3b8' },
               ticks: { color: '#94a3b8', callback: v => '£' + v },
               grid: { color: '#1e293b' }
             },
