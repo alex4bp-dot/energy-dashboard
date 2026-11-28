@@ -232,6 +232,10 @@
       <h2>Vaillant aroTHERM Plus: Temperatures (°C) & COP</h2>
       <div class="chart-wrap"><canvas id="hpChart"></canvas></div>
     </div>
+    <div class="chart-card" style="grid-column: 1 / -1;">
+      <h2>Vaillant System Water Pressure (bar) <span id="pressure-badge" style="font-size:0.85rem;color:var(--muted);font-weight:500;"></span></h2>
+      <div class="chart-wrap" style="height:220px;"><canvas id="pressureChart"></canvas></div>
+    </div>
   </div>
 
   <script>
@@ -390,6 +394,17 @@
         ticks: { color: '#a855f7' },
         grid: { drawOnChartArea: false }
       });
+
+      const pSeries = slice(s.water_pressure);
+      const curP = rawData.current && rawData.current.water_pressure_bar;
+      const badge = document.getElementById('pressure-badge');
+      if (badge && curP !== null && curP !== undefined) {
+        badge.textContent = `(Current: ${Number(curP).toFixed(2)} bar | Alert < 0.80 bar)`;
+      }
+      makeChart('pressureChart', labels, [
+        { label: 'Water Pressure (bar)', data: pSeries, borderColor: '#06b6d4', backgroundColor: '#06b6d422', fill: true },
+        { label: 'Low Pressure Alert (0.80 bar)', data: labels.map(() => 0.8), borderColor: '#ef4444', borderDash: [5, 5], borderWidth: 1.5 }
+      ], 'bar');
     }
 
     let yoyMode = 'per_day';
